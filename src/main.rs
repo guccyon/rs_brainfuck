@@ -1,15 +1,55 @@
+use std::fmt;
+
 #[derive(Debug)]
-enum Token {
+enum Instruction {
+    UNDEFINED,
     NEXT,
     PREV,
     INC,
     DEC,
     IN,
     OUT,
-    FWD,
-    BWD,
+    BLOCK(Vec<Instruction>),
 }
 
+impl From<char> for Instruction {
+    fn from(c: char) -> Instruction {
+        use Instruction::*;
+        match c {
+            '>' => NEXT,
+            '<' => PREV,
+            '+' => INC,
+            '-' => DEC,
+            '.' => OUT,
+            ',' => IN,
+            _ => UNDEFINED,
+        }
+    }
+}
+
+impl Instruction {
+    fn as_str(&self) -> &str {
+        use Instruction::*;
+        match self {
+            &NEXT => ">",
+            &PREV => "<",
+            &INC => "+",
+            &DEC => "-",
+            &OUT => ".",
+            &IN => ",",
+            &BLOCK(_) => "[...]",
+            &UNDEFINED => "*",
+        }
+    }
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+use std::iter::Peekable;
 struct Parser;
 
 impl Parser {
@@ -17,53 +57,89 @@ impl Parser {
         Self
     }
 
-    fn parse(&self, tokens: Vec<char>) -> Vec<Token> {
-        tokens.iter().map(|c| self.parse_char(c).unwrap()).collect()
+    fn parse(&self, tokens: Vec<char>) -> Vec<Instruction> {
+        let mut iter = tokens.into_iter().peekable();
+        self.inst(&mut iter)
     }
 
-    fn parse_char(&self, c: &char) -> Option<Token> {
-        use Token::*;
-        match c {
-            '>' => Some(NEXT),
-            '<' => Some(PREV),
-            '+' => Some(INC),
-            '-' => Some(DEC),
-            '.' => Some(OUT),
-            ',' => Some(IN),
-            '[' => Some(FWD),
-            ']' => Some(BWD),
-            _ => None,
+    fn inst<T>(&self, tokens: &mut Peekable<T>) -> Vec<Instruction>
+    where
+        T: Iterator<Item = char>,
+    {
+        let mut instructions = vec![];
+        while let Some(c) = tokens.next() {
+            let i: Instruction = match c {
+                '>' | '<' | '+' | '-' | '.' | ',' => c.into(),
+                '[' => {
+                    let inner = self.inst(tokens);
+                    Instruction::BLOCK(inner)
+                }
+                ']' => break,
+                _ => break,
+            };
+            instructions.push(i);
         }
+        instructions
     }
 }
 
 struct Interpreter {
     memory: Vec<i32>,
     pointer: usize,
-    stack: Vec<usize>,
 }
 
 impl Interpreter {
     fn new() -> Self {
         Self {
-            memory: vec![0; 100],
+            memory: vec![0; 10],
             pointer: 0,
-            stack: vec![],
         }
     }
 
-    fn eval(&mut self, tokens: Vec<Token>) {
-        use Token::*;
+    fn display_instructions(&self, instructions: &Vec<Instruction>, current: usize) {
+        // print!("{}[2J", 27 as char);
+        let mut inst = String::new();
+        let mut carret = String::new();
+        for (i, v) in instructions.iter().enumerate() {
+            inst.push_str(&format!("{}", v.as_str()));
+            if i == current {
+                carret.push_str("^")
+            } else {
+                carret.push_str(" ")
+            }
+        }
+        println!("{}", inst);
+        println!("{}", carret);
+        self.dump();
+    }
+
+    fn dump(&self) {
+        for i in self.memory.iter() {
+            print!("|{:02}", i);
+        }
+        println!("");
+        for (i, _) in self.memory.iter().enumerate() {
+            if i == self.pointer {
+                print!(" ↑ ");
+            } else {
+                print!("   ");
+            }
+        }
+        println!("");
+    }
+
+    fn eval(&mut self, instructions: &Vec<Instruction>) {
+        use Instruction::*;
         let mut current = 0;
+
         loop {
-            match tokens.get(current) {
+            match instructions.get(current) {
                 Some(INC) => self.increment(),
                 Some(DEC) => self.decrement(),
                 Some(NEXT) => self.next(),
                 Some(PREV) => self.prev(),
                 Some(OUT) => self.print(),
-                Some(FWD) => current += self.foward(&tokens[current..]),
-                Some(BWD) => current -= self.backward(&tokens[..current]),
+                Some(BLOCK(i)) => self.run_loop(i),
                 _ => break,
             }
             current += 1;
@@ -92,48 +168,23 @@ impl Interpreter {
         print!("{}", c);
     }
 
-    fn foward(&mut self, slices: &[Token]) -> usize {
-        let value = self.memory[self.pointer];
-        if value != 0 {
-            self.stack.push(self.pointer);
-            return 0;
-        }
-
-        let mut counter = 0;
+    fn run_loop(&mut self, instructions: &Vec<Instruction>) {
         loop {
-            let token = &slices[counter];
-            if let &Token::BWD = token {
+            let value = self.memory[self.pointer];
+            if value == 0 {
                 break;
+            } else {
+                self.eval(instructions)
             }
-            counter += 1;
         }
-        return counter;
-    }
-
-    fn backward(&mut self, slices: &[Token]) -> usize {
-        let value = self.memory[self.pointer];
-        if value == 0 {
-            self.stack.pop();
-            return 0;
-        }
-
-        let mut counter = 1;
-        loop {
-            let token = &slices[slices.len() - counter];
-            if let &Token::FWD = token {
-                break;
-            }
-            counter += 1;
-        }
-        return counter;
     }
 }
 
 fn main() {
     let src = "+++++++++[>++++++++>+++++++++++>+++++<<<-]>.>++.+++++++..+++.>-------------.<<+++++++++++++++.>.+++.------.--------.>+..";
-    let tokens: Vec<char> = src.chars().collect();
-    let tokens = Parser::new().parse(tokens);
+    let chars: Vec<char> = src.chars().collect();
+    let instructions = Parser::new().parse(chars);
 
     let mut interpreter = Interpreter::new();
-    interpreter.eval(tokens);
+    interpreter.eval(&instructions);
 }
